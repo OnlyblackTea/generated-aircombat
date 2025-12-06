@@ -324,8 +324,9 @@ void Update() {
                         else player.score += 20;
                         
                         // 10%概率掉落道具
-                        if (rand() % 100 < 10) {
-                            int item_type = rand() % 2; // 0=生命, 1=火力
+                        int drop_rand = rand();
+                        if (drop_rand % 100 < 10) {
+                            int item_type = (drop_rand / 100) % 2; // 0=生命, 1=火力
                             SpawnItem(enemies[j].pos.x, enemies[j].pos.y, item_type);
                         }
                     }
@@ -370,7 +371,7 @@ void Update() {
                 } else {
                     // 火力升级
                     if (player.power_level < 2) player.power_level++;
-                    player.power_timer = 600; // 10秒 (600帧 @ 60fps)
+                    player.power_timer = 625; // 10秒 (625帧 @ 62.5fps with Sleep(16))
                 }
             }
         }
@@ -487,10 +488,10 @@ void Draw() {
     // 火力等级显示
     if (player.power_level > 0) {
         printf("  POWER: ");
-        for (int i = 0; i <= player.power_level; i++) {
+        for (int i = 0; i < player.power_level; i++) {
             printf("P");
         }
-        printf(" (%ds)", player.power_timer / 60);
+        printf(" (%ds)", (player.power_timer * 16) / 1000); // 正确计算秒数
     }
     printf("  (WASD to Move)\n");
     
@@ -510,7 +511,7 @@ int main() {
     while (player.lives > 0) {
         Update();
         Draw();
-        Sleep(16); // 控制游戏速度 (~30 FPS)
+        Sleep(16); // 控制游戏速度 (~62.5 FPS)
     }
 
     GotoXY(WIDTH / 2 - 5, HEIGHT / 2);
