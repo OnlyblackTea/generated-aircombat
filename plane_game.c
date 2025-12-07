@@ -361,10 +361,10 @@ void Update() {
         if (bullets[i].active && bullets[i].is_enemy) {
             double dx = fabs(bullets[i].pos.x - player.pos.x);
             double dy = fabs(bullets[i].pos.y - player.pos.y);
-            double dist = sqrt(dx*dx + dy*dy);
+            double dist_squared = dx*dx + dy*dy; // 使用距离平方避免sqrt计算
             
-            // 直接命中判定
-            if (dx < 0.5 && dy < 0.5) {
+            // 直接命中判定（使用圆形判定与擦弹保持一致）
+            if (dist_squared < 0.25) { // 0.5*0.5 = 0.25
                 // 如果处于无敌状态，不扣血
                 if (player.invincible_timer > 0) {
                     bullets[i].active = 0;
@@ -374,8 +374,9 @@ void Update() {
                 }
             }
             // 擦弹判定：子弹极度接近但未命中
-            else if (dist < GRAZE_DISTANCE && dist >= 0.5) {
-                // 触发擦弹奖励
+            else if (dist_squared < 1.0 && dist_squared >= 0.25) { // GRAZE_DISTANCE^2 = 1.0
+                // 触发擦弹奖励，并移除子弹防止重复触发
+                bullets[i].active = 0;
                 player.graze_count++;
                 player.score += 5; // 擦弹奖励5分
                 player.invincible_timer = INVINCIBLE_FRAMES; // 给予短暂无敌时间
