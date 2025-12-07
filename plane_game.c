@@ -58,6 +58,7 @@ typedef struct {
     int shoot_timer; // 射击计时器
     int power_level; // 火力等级: 0=普通, 1=双发, 2=三发
     int power_timer; // 火力升级持续时间
+    int slow_mode;   // 慢速移动模式: 0=正常, 1=精确模式
 } Player;
 
 // --- 全局变量 ---
@@ -67,6 +68,7 @@ Enemy enemies[MAX_ENEMIES];
 Item items[MAX_ITEMS];
 Explosion explosions[MAX_EXPLOSIONS];
 int frame_count = 0;
+int high_score = 0; // 最高分记录
 
 // --- 辅助函数：控制台光标 ---
 
@@ -84,6 +86,51 @@ void GotoXY(int x, int y) {
     SetConsoleCursorPosition(GetStdHandle(STD_OUTPUT_HANDLE), coord);
 }
 
+// --- 音效函数 ---
+
+// 播放射击音效 (高音)
+void PlayShootSound() {
+    Beep(1200, 30); // 1200Hz, 30ms
+}
+
+// 播放击中音效 (中音)
+void PlayHitSound() {
+    Beep(800, 50); // 800Hz, 50ms
+}
+
+// 播放被击中音效 (低音)
+void PlayDamageSound() {
+    Beep(300, 100); // 300Hz, 100ms
+}
+
+// 播放爆炸音效 (报警音)
+void PlayExplosionSound() {
+    Beep(200, 150); // 200Hz, 150ms
+}
+
+// --- 最高分管理函数 ---
+
+// 从文件读取最高分
+void LoadHighScore() {
+    FILE* file = fopen("highscore.txt", "r");
+    if (file != NULL) {
+        fscanf(file, "%d", &high_score);
+        fclose(file);
+    }
+}
+
+// 保存最高分到文件
+void SaveHighScore() {
+    if (player.score > high_score) {
+        high_score = player.score;
+        FILE* file = fopen("highscore.txt", "w");
+        if (file != NULL) {
+            fprintf(file, "%d", high_score);
+            fclose(file);
+        }
+    }
+}
+
 // --- 游戏逻辑函数 ---
 
 void InitGame() {
@@ -95,6 +142,7 @@ void InitGame() {
     player.shoot_timer = 0;
     player.power_level = 0;
     player.power_timer = 0;
+    player.slow_mode = 0;
 
     // 清空对象池
     for(int i=0; i<MAX_BULLETS; i++) bullets[i].active = 0;
@@ -174,9 +222,15 @@ void Update() {
     frame_count++;
 
     // 1. 玩家移动 (非阻塞输入)
+    // 检测Shift键状态 (使用GetAsyncKeyState)
+    player.slow_mode = (GetAsyncKeyState(VK_SHIFT) & 0x8000) || (GetAsyncKeyState(VK_SPACE) & 0x8000);
+    
     if (_kbhit()) {
         char key = _getch();
-        double speed = 0.7;
+        
+        // 根据模式设置移动速度
+        double speed = player.slow_mode ? 0.25 : 0.7; // 慢速模式为1/3-1/4速度
+        
         if (key == 'w' && player.pos.y > 1) player.pos.y -= speed;
         if (key == 's' && player.pos.y < HEIGHT - 2) player.pos.y += speed;
         if (key == 'a' && player.pos.x > 1) player.pos.x -= speed;
@@ -203,6 +257,7 @@ void Update() {
             SpawnBullet(player.pos.x, player.pos.y - 1, 0, -1.0, 0);
             SpawnBullet(player.pos.x + 0.7, player.pos.y - 1, 0, -1.0, 0);
         }
+        PlayShootSound(); // 播放射击音效
         player.shoot_timer = 0;
     }
     
@@ -317,6 +372,7 @@ void Update() {
                         
                         // 生成爆炸效果
                         SpawnExplosion(enemies[j].pos.x, enemies[j].pos.y);
+                        PlayHitSound(); // 播放击中音效
                         
                         // 根据敌机类型给予不同分数
                         if (enemies[j].type == 0) player.score += 10;
@@ -342,6 +398,7 @@ void Update() {
                 fabs(bullets[i].pos.y - player.pos.y) < 0.5) {
                 bullets[i].active = 0;
                 player.lives--;
+                PlayDamageSound(); // 播放被击中音效
             }
         }
     }
@@ -353,6 +410,7 @@ void Update() {
                  fabs(enemies[i].pos.y - player.pos.y) < 0.8) {
                  enemies[i].active = 0;
                  SpawnExplosion(enemies[i].pos.x, enemies[i].pos.y);
+                 PlayExplosionSound(); // 播放爆炸音效
                  player.lives = 0; // 直接死亡
              }
         }
@@ -471,6 +529,11 @@ void Draw() {
         PutChar(buffer, px-1, py+1, '/');
         PutChar(buffer, px+1, py+1, '\\');
         PutChar(buffer, px, py-1, '^');
+        
+        // 在慢速模式下显示精确判定点
+        if (player.slow_mode) {
+            PutChar(buffer, px, py, 'o'); // 显示判定点
+        }
     }
 
     // 7. 真正的输出到屏幕
@@ -493,7 +556,13 @@ void Draw() {
         }
         printf(" (%ds)", (player.power_timer * 16) / 1000); // 正确计算秒数
     }
-    printf("  (WASD to Move)\n");
+    
+    // 慢速模式显示
+    if (player.slow_mode) {
+        printf("  [SLOW]");
+    }
+    
+    printf("  (WASD + Space/Shift)\n");
     
     for (int y = 0; y < HEIGHT; y++) {
         printf("%s\n", buffer[y]);
@@ -503,8 +572,10 @@ void Draw() {
 int main() {
     srand((unsigned)time(NULL));
     HideCursor();
+    LoadHighScore(); // 加载最高分
     InitGame();
 
+    printf("HIGH SCORE: %d\n", high_score);
     printf("PRESS ANY KEY TO START...");
     _getch();
 
@@ -514,10 +585,24 @@ int main() {
         Sleep(16); // 控制游戏速度 (~62.5 FPS)
     }
 
+    // 检查是否破纪录
+    int is_new_record = (player.score > high_score);
+    
+    // 保存最高分
+    SaveHighScore();
+    
     GotoXY(WIDTH / 2 - 5, HEIGHT / 2);
     printf("GAME OVER!");
     GotoXY(WIDTH / 2 - 6, HEIGHT / 2 + 1);
     printf("Final Score: %d", player.score);
+    GotoXY(WIDTH / 2 - 6, HEIGHT / 2 + 2);
+    
+    // 显示最高分信息
+    if (is_new_record) {
+        printf("NEW HIGH SCORE!");
+    } else {
+        printf("High Score: %d", high_score);
+    }
     
     // 防止程序直接退出
     while(1) if(_kbhit()) break; 
