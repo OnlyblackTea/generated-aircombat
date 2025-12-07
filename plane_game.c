@@ -10,6 +10,8 @@
 #define HEIGHT 25       // 游戏区域高度
 #define MAX_BULLETS 100 // 最大子弹数
 #define MAX_ENEMIES 10  // 最大敌人数
+#define MAX_ITEMS 5     // 最大道具数
+#define MAX_EXPLOSIONS 10 // 最大爆炸效果数
 
 // --- 数据结构 ---
 
@@ -31,7 +33,22 @@ typedef struct {
     Vec2 pos;
     int active;
     int cooldown;  // 发射冷却
+    int type;      // 敌机类型: 0=普通(自机狙), 1=直线机, 2=散射机
 } Enemy;
+
+// 道具结构
+typedef struct {
+    Vec2 pos;
+    int active;
+    int type;      // 0=生命恢复(H), 1=火力升级(P)
+} Item;
+
+// 爆炸效果结构
+typedef struct {
+    Vec2 pos;
+    int active;
+    int timer;     // 爆炸持续时间
+} Explosion;
 
 // 自机结构
 typedef struct {
@@ -39,12 +56,16 @@ typedef struct {
     int lives;
     int score;
     int shoot_timer; // 射击计时器
+    int power_level; // 火力等级: 0=普通, 1=双发, 2=三发
+    int power_timer; // 火力升级持续时间
 } Player;
 
 // --- 全局变量 ---
 Player player;
 Bullet bullets[MAX_BULLETS];
 Enemy enemies[MAX_ENEMIES];
+Item items[MAX_ITEMS];
+Explosion explosions[MAX_EXPLOSIONS];
 int frame_count = 0;
 
 // --- 辅助函数：控制台光标 ---
@@ -72,10 +93,14 @@ void InitGame() {
     player.lives = 3;
     player.score = 0;
     player.shoot_timer = 0;
+    player.power_level = 0;
+    player.power_timer = 0;
 
     // 清空对象池
     for(int i=0; i<MAX_BULLETS; i++) bullets[i].active = 0;
     for(int i=0; i<MAX_ENEMIES; i++) enemies[i].active = 0;
+    for(int i=0; i<MAX_ITEMS; i++) items[i].active = 0;
+    for(int i=0; i<MAX_EXPLOSIONS; i++) explosions[i].active = 0;
 }
 
 // 发射子弹
@@ -93,7 +118,7 @@ void SpawnBullet(double x, double y, double vx, double vy, int is_enemy) {
     }
 }
 
-// 生成敌人
+// 生成敌人 - 根据分数决定类型
 void SpawnEnemy() {
     for (int i = 0; i < MAX_ENEMIES; i++) {
         if (!enemies[i].active) {
@@ -101,6 +126,44 @@ void SpawnEnemy() {
             enemies[i].pos.y = 1;
             enemies[i].active = 1;
             enemies[i].cooldown = 20 + rand() % 30; // 随机初始冷却
+            
+            // 根据分数决定敌机类型
+            if (player.score < 100) {
+                enemies[i].type = 0; // 只有普通敌机
+            } else if (player.score < 300) {
+                enemies[i].type = (rand() % 100 < 70) ? 0 : 1; // 70%普通, 30%直线
+            } else {
+                int r = rand() % 100;
+                if (r < 50) enemies[i].type = 0;      // 50%普通
+                else if (r < 80) enemies[i].type = 1; // 30%直线
+                else enemies[i].type = 2;             // 20%散射
+            }
+            return;
+        }
+    }
+}
+
+// 生成道具
+void SpawnItem(double x, double y, int type) {
+    for (int i = 0; i < MAX_ITEMS; i++) {
+        if (!items[i].active) {
+            items[i].pos.x = x;
+            items[i].pos.y = y;
+            items[i].active = 1;
+            items[i].type = type;
+            return;
+        }
+    }
+}
+
+// 生成爆炸效果
+void SpawnExplosion(double x, double y) {
+    for (int i = 0; i < MAX_EXPLOSIONS; i++) {
+        if (!explosions[i].active) {
+            explosions[i].pos.x = x;
+            explosions[i].pos.y = y;
+            explosions[i].active = 1;
+            explosions[i].timer = 10; // 爆炸持续10帧
             return;
         }
     }
@@ -127,8 +190,28 @@ void Update() {
     
     player.shoot_timer++;
     if (player.shoot_timer >= fire_rate) {
-        SpawnBullet(player.pos.x, player.pos.y - 1, 0, -1.0, 0); // 向上发射
+        // 根据火力等级发射子弹
+        if (player.power_level == 0) {
+            SpawnBullet(player.pos.x, player.pos.y - 1, 0, -1.0, 0);
+        } else if (player.power_level == 1) {
+            // 双发
+            SpawnBullet(player.pos.x - 0.5, player.pos.y - 1, 0, -1.0, 0);
+            SpawnBullet(player.pos.x + 0.5, player.pos.y - 1, 0, -1.0, 0);
+        } else {
+            // 三发
+            SpawnBullet(player.pos.x - 0.7, player.pos.y - 1, 0, -1.0, 0);
+            SpawnBullet(player.pos.x, player.pos.y - 1, 0, -1.0, 0);
+            SpawnBullet(player.pos.x + 0.7, player.pos.y - 1, 0, -1.0, 0);
+        }
         player.shoot_timer = 0;
+    }
+    
+    // 更新火力升级计时器
+    if (player.power_timer > 0) {
+        player.power_timer--;
+        if (player.power_timer == 0) {
+            player.power_level = 0; // 恢复普通火力
+        }
     }
 
     // 3. 更新子弹
@@ -145,13 +228,25 @@ void Update() {
         }
     }
 
-    // 4. 更新敌人 & 敌机发射自机狙
-    if (frame_count % 30 == 0) SpawnEnemy(); // 每30帧尝试生成敌人
+    // 4. 更新敌人 & 敌机发射
+    // 分数越高，生成频率越高
+    int spawn_interval = 30 - (player.score / 100);
+    if (spawn_interval < 15) spawn_interval = 15;
+    if (frame_count % spawn_interval == 0) SpawnEnemy();
 
     for (int i = 0; i < MAX_ENEMIES; i++) {
         if (enemies[i].active) {
-            // 敌人移动 (缓慢向下)
-            enemies[i].pos.y += 0.1; 
+            // 根据类型移动
+            if (enemies[i].type == 0) {
+                // 普通敌机：缓慢向下
+                enemies[i].pos.y += 0.1;
+            } else if (enemies[i].type == 1) {
+                // 直线机：快速向下
+                enemies[i].pos.y += 0.3;
+            } else {
+                // 散射机：缓慢向下
+                enemies[i].pos.y += 0.08;
+            }
 
             // 消失在底部
             if (enemies[i].pos.y >= HEIGHT - 1) {
@@ -159,63 +254,134 @@ void Update() {
                 continue;
             }
 
-            // 发射自机狙 logic
+            // 发射子弹逻辑
             enemies[i].cooldown--;
             if (enemies[i].cooldown <= 0) {
-                // 计算向量
-                double dx = player.pos.x - enemies[i].pos.x;
-                double dy = player.pos.y - enemies[i].pos.y;
-                double dist = sqrt(dx*dx + dy*dy);
-                
-                // 归一化并设置速度 (子弹速度 0.7)
-                if (dist > 0) {
-                    double speed = 0.5;
-                    SpawnBullet(enemies[i].pos.x, enemies[i].pos.y, (dx/dist)*speed, (dy/dist)*speed, 1);
+                if (enemies[i].type == 0) {
+                    // 普通敌机：发射自机狙
+                    double dx = player.pos.x - enemies[i].pos.x;
+                    double dy = player.pos.y - enemies[i].pos.y;
+                    double dist = sqrt(dx*dx + dy*dy);
+                    
+                    if (dist > 0) {
+                        double speed = 0.5;
+                        SpawnBullet(enemies[i].pos.x, enemies[i].pos.y, (dx/dist)*speed, (dy/dist)*speed, 1);
+                    }
+                    enemies[i].cooldown = 40 + rand() % 40;
+                } else if (enemies[i].type == 2) {
+                    // 散射机：发射三发散射弹
+                    SpawnBullet(enemies[i].pos.x, enemies[i].pos.y, -0.3, 0.5, 1); // 左下
+                    SpawnBullet(enemies[i].pos.x, enemies[i].pos.y, 0, 0.6, 1);    // 正下
+                    SpawnBullet(enemies[i].pos.x, enemies[i].pos.y, 0.3, 0.5, 1);  // 右下
+                    enemies[i].cooldown = 50 + rand() % 30;
                 }
-                enemies[i].cooldown = 40 + rand() % 40; // 重置冷却
+                // 直线机不发射子弹
+            }
+        }
+    }
+    
+    // 5. 更新道具
+    for (int i = 0; i < MAX_ITEMS; i++) {
+        if (items[i].active) {
+            items[i].pos.y += 0.15; // 缓慢下落
+            
+            // 消失在底部
+            if (items[i].pos.y >= HEIGHT - 1) {
+                items[i].active = 0;
+            }
+        }
+    }
+    
+    // 6. 更新爆炸效果
+    for (int i = 0; i < MAX_EXPLOSIONS; i++) {
+        if (explosions[i].active) {
+            explosions[i].timer--;
+            if (explosions[i].timer <= 0) {
+                explosions[i].active = 0;
             }
         }
     }
 
-    // 5. 碰撞检测
+    // 7. 碰撞检测 (优化判定精度)
     
     // A. 子弹 vs 敌人
     for (int i = 0; i < MAX_BULLETS; i++) {
         if (bullets[i].active && !bullets[i].is_enemy) {
             for (int j = 0; j < MAX_ENEMIES; j++) {
                 if (enemies[j].active) {
-                    // 简单的距离判定 (距离小于 1.5 算击中)
-                    if (fabs(bullets[i].pos.x - enemies[j].pos.x) < 1.5 && 
-                        fabs(bullets[i].pos.y - enemies[j].pos.y) < 1.5) {
+                    // 优化判定：子弹判定为 0.8
+                    if (fabs(bullets[i].pos.x - enemies[j].pos.x) < 0.8 && 
+                        fabs(bullets[i].pos.y - enemies[j].pos.y) < 0.8) {
                         bullets[i].active = 0;
                         enemies[j].active = 0;
-                        player.score += 10;
+                        
+                        // 生成爆炸效果
+                        SpawnExplosion(enemies[j].pos.x, enemies[j].pos.y);
+                        
+                        // 根据敌机类型给予不同分数
+                        if (enemies[j].type == 0) player.score += 10;
+                        else if (enemies[j].type == 1) player.score += 15;
+                        else player.score += 20;
+                        
+                        // 10%概率掉落道具
+                        int drop_rand = rand();
+                        if (drop_rand % 100 < 10) {
+                            int item_type = (drop_rand / 100) % 2; // 0=生命, 1=火力
+                            SpawnItem(enemies[j].pos.x, enemies[j].pos.y, item_type);
+                        }
                     }
                 }
             }
         }
     }
 
-    // B. 敌机子弹 vs 玩家
+    // B. 敌机子弹 vs 玩家 (缩小判定到 0.5，实现擦弹)
     for (int i = 0; i < MAX_BULLETS; i++) {
         if (bullets[i].active && bullets[i].is_enemy) {
-            if (fabs(bullets[i].pos.x - player.pos.x) < 1.0 && 
-                fabs(bullets[i].pos.y - player.pos.y) < 1.0) {
+            if (fabs(bullets[i].pos.x - player.pos.x) < 0.5 && 
+                fabs(bullets[i].pos.y - player.pos.y) < 0.5) {
                 bullets[i].active = 0;
                 player.lives--;
             }
         }
     }
 
-    // C. 敌机本体 vs 玩家 (同归于尽)
+    // C. 敌机本体 vs 玩家 (缩小判定)
     for (int i = 0; i < MAX_ENEMIES; i++) {
         if (enemies[i].active) {
-             if (fabs(enemies[i].pos.x - player.pos.x) < 1.5 && 
-                 fabs(enemies[i].pos.y - player.pos.y) < 1.5) {
+             if (fabs(enemies[i].pos.x - player.pos.x) < 0.8 && 
+                 fabs(enemies[i].pos.y - player.pos.y) < 0.8) {
                  enemies[i].active = 0;
+                 SpawnExplosion(enemies[i].pos.x, enemies[i].pos.y);
                  player.lives = 0; // 直接死亡
              }
         }
+    }
+    
+    // D. 玩家 vs 道具
+    for (int i = 0; i < MAX_ITEMS; i++) {
+        if (items[i].active) {
+            if (fabs(items[i].pos.x - player.pos.x) < 1.2 && 
+                fabs(items[i].pos.y - player.pos.y) < 1.2) {
+                items[i].active = 0;
+                
+                if (items[i].type == 0) {
+                    // 生命恢复
+                    if (player.lives < 5) player.lives++;
+                } else {
+                    // 火力升级
+                    if (player.power_level < 2) player.power_level++;
+                    player.power_timer = 625; // 10秒 (625帧 @ 62.5fps with Sleep(16))
+                }
+            }
+        }
+    }
+}
+
+// 辅助函数：在buffer中安全地放置字符
+void PutChar(char buffer[HEIGHT][WIDTH + 1], int x, int y, char c) {
+    if (x > 0 && x < WIDTH - 1 && y > 0 && y < HEIGHT - 1) {
+        buffer[y][x] = c;
     }
 }
 
@@ -238,32 +404,97 @@ void Draw() {
         if (bullets[i].active) {
             int x = (int)bullets[i].pos.x;
             int y = (int)bullets[i].pos.y;
-            if (x > 0 && x < WIDTH - 1 && y > 0 && y < HEIGHT - 1) {
-                buffer[y][x] = bullets[i].is_enemy ? '*' : '|';
+            PutChar(buffer, x, y, bullets[i].is_enemy ? '*' : '|');
+        }
+    }
+
+    // 3. 绘制道具
+    for (int i = 0; i < MAX_ITEMS; i++) {
+        if (items[i].active) {
+            int x = (int)items[i].pos.x;
+            int y = (int)items[i].pos.y;
+            char icon = (items[i].type == 0) ? 'H' : 'P';
+            PutChar(buffer, x, y, icon);
+        }
+    }
+
+    // 4. 绘制爆炸效果 (多字符)
+    for (int i = 0; i < MAX_EXPLOSIONS; i++) {
+        if (explosions[i].active) {
+            int x = (int)explosions[i].pos.x;
+            int y = (int)explosions[i].pos.y;
+            
+            // 根据计时器显示不同阶段的爆炸
+            if (explosions[i].timer > 6) {
+                PutChar(buffer, x, y, '#');
+                PutChar(buffer, x-1, y, '*');
+                PutChar(buffer, x+1, y, '*');
+            } else if (explosions[i].timer > 3) {
+                PutChar(buffer, x, y, 'X');
+                PutChar(buffer, x-1, y, 'x');
+                PutChar(buffer, x+1, y, 'x');
+            } else {
+                PutChar(buffer, x, y, '+');
             }
         }
     }
 
-    // 3. 绘制敌人
+    // 5. 绘制敌人 (多字符造型)
     for (int i = 0; i < MAX_ENEMIES; i++) {
         if (enemies[i].active) {
             int x = (int)enemies[i].pos.x;
             int y = (int)enemies[i].pos.y;
-            if (x > 0 && x < WIDTH - 1 && y > 0 && y < HEIGHT - 1) {
-                buffer[y][x] = 'V';
+            
+            if (enemies[i].type == 0) {
+                // 普通敌机 - 使用V字型
+                PutChar(buffer, x, y, 'V');
+                PutChar(buffer, x-1, y-1, '\\');
+                PutChar(buffer, x+1, y-1, '/');
+            } else if (enemies[i].type == 1) {
+                // 直线机 - 使用简单三角
+                PutChar(buffer, x, y, 'v');
+                PutChar(buffer, x, y-1, '|');
+            } else {
+                // 散射机 - 使用W字型
+                PutChar(buffer, x, y, 'W');
+                PutChar(buffer, x-1, y-1, '<');
+                PutChar(buffer, x+1, y-1, '>');
             }
         }
     }
 
-    // 4. 绘制玩家
+    // 6. 绘制玩家 (多字符造型)
     int px = (int)player.pos.x;
     int py = (int)player.pos.y;
-    if (px > 0 && px < WIDTH - 1 && py > 0 && py < HEIGHT - 1)
-        buffer[py][px] = 'A';
+    if (px > 0 && px < WIDTH - 1 && py > 0 && py < HEIGHT - 1) {
+        PutChar(buffer, px, py, 'A');
+        PutChar(buffer, px-1, py+1, '/');
+        PutChar(buffer, px+1, py+1, '\\');
+        PutChar(buffer, px, py-1, '^');
+    }
 
-    // 5. 真正的输出到屏幕
+    // 7. 真正的输出到屏幕
     GotoXY(0, 0);
-    printf("Score: %d  Lives: %d  (WASD to Move)\n", player.score, player.lives);
+    
+    // 生命值条显示
+    printf("Score: %d  Lives: ", player.score);
+    for (int i = 0; i < player.lives && i < 5; i++) {
+        printf("*");
+    }
+    for (int i = player.lives; i < 5; i++) {
+        printf("-");
+    }
+    
+    // 火力等级显示
+    if (player.power_level > 0) {
+        printf("  POWER: ");
+        for (int i = 0; i < player.power_level; i++) {
+            printf("P");
+        }
+        printf(" (%ds)", (player.power_timer * 16) / 1000); // 正确计算秒数
+    }
+    printf("  (WASD to Move)\n");
+    
     for (int y = 0; y < HEIGHT; y++) {
         printf("%s\n", buffer[y]);
     }
@@ -280,7 +511,7 @@ int main() {
     while (player.lives > 0) {
         Update();
         Draw();
-        Sleep(16); // 控制游戏速度 (~30 FPS)
+        Sleep(16); // 控制游戏速度 (~62.5 FPS)
     }
 
     GotoXY(WIDTH / 2 - 5, HEIGHT / 2);
