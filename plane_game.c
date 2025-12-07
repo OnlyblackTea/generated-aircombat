@@ -114,7 +114,9 @@ void PlayExplosionSound() {
 void LoadHighScore() {
     FILE* file = fopen("highscore.txt", "r");
     if (file != NULL) {
-        fscanf(file, "%d", &high_score);
+        if (fscanf(file, "%d", &high_score) != 1) {
+            high_score = 0; // 读取失败时重置为0
+        }
         fclose(file);
     }
 }
@@ -222,8 +224,10 @@ void Update() {
     frame_count++;
 
     // 1. 玩家移动 (非阻塞输入)
-    // 检测Shift键状态 (使用GetAsyncKeyState)
-    player.slow_mode = (GetAsyncKeyState(VK_SHIFT) & 0x8000) || (GetAsyncKeyState(VK_SPACE) & 0x8000);
+    // 检测Shift/Space键状态 (使用GetAsyncKeyState)
+    int shift_pressed = GetAsyncKeyState(VK_SHIFT) & 0x8000;
+    int space_pressed = GetAsyncKeyState(VK_SPACE) & 0x8000;
+    player.slow_mode = shift_pressed || space_pressed;
     
     if (_kbhit()) {
         char key = _getch();
