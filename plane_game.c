@@ -9,9 +9,11 @@
 #define WIDTH 40        // 游戏区域宽度
 #define HEIGHT 25       // 游戏区域高度
 #define MAX_BULLETS 100 // 最大子弹数
-#define MAX_ENEMIES 10  // 最大敌人数
+#define MAX_ENEMIES 8   // 最大敌人数 (降低以改善平衡性)
 #define MAX_ITEMS 5     // 最大道具数
 #define MAX_EXPLOSIONS 10 // 最大爆炸效果数
+#define GRAZE_DISTANCE 1.0 // 擦弹判定距离
+#define INVINCIBLE_FRAMES 30 // 擦弹后无敌时间（帧数）
 
 // --- 数据结构 ---
 
@@ -58,6 +60,8 @@ typedef struct {
     int shoot_timer; // 射击计时器
     int power_level; // 火力等级: 0=普通, 1=双发, 2=三发
     int power_timer; // 火力升级持续时间
+    int invincible_timer; // 擦弹无敌时间
+    int graze_count; // 擦弹计数
 } Player;
 
 // --- 全局变量 ---
@@ -95,6 +99,8 @@ void InitGame() {
     player.shoot_timer = 0;
     player.power_level = 0;
     player.power_timer = 0;
+    player.invincible_timer = 0;
+    player.graze_count = 0;
 
     // 清空对象池
     for(int i=0; i<MAX_BULLETS; i++) bullets[i].active = 0;
@@ -176,11 +182,16 @@ void Update() {
     // 1. 玩家移动 (非阻塞输入)
     if (_kbhit()) {
         char key = _getch();
-        double speed = 0.7;
+        double speed = 0.8; // 提高移动速度以改善操控性
         if (key == 'w' && player.pos.y > 1) player.pos.y -= speed;
         if (key == 's' && player.pos.y < HEIGHT - 2) player.pos.y += speed;
         if (key == 'a' && player.pos.x > 1) player.pos.x -= speed;
         if (key == 'd' && player.pos.x < WIDTH - 2) player.pos.x += speed;
+    }
+    
+    // 更新无敌时间
+    if (player.invincible_timer > 0) {
+        player.invincible_timer--;
     }
 
     // 2. 玩家自动射击
@@ -229,10 +240,20 @@ void Update() {
     }
 
     // 4. 更新敌人 & 敌机发射
-    // 分数越高，生成频率越高
-    int spawn_interval = 30 - (player.score / 100);
-    if (spawn_interval < 15) spawn_interval = 15;
-    if (frame_count % spawn_interval == 0) SpawnEnemy();
+    // 动态控制敌机生成：调整初始频率，并限制最大在场数量
+    int spawn_interval = 50 - (player.score / 100); // 提高初始间隔从30到50
+    if (spawn_interval < 20) spawn_interval = 20; // 提高最低间隔从15到20
+    
+    // 计算当前在场敌机数量
+    int active_enemies = 0;
+    for (int i = 0; i < MAX_ENEMIES; i++) {
+        if (enemies[i].active) active_enemies++;
+    }
+    
+    // 只有在未达到上限时才生成新敌机
+    if (frame_count % spawn_interval == 0 && active_enemies < MAX_ENEMIES) {
+        SpawnEnemy();
+    }
 
     for (int i = 0; i < MAX_ENEMIES; i++) {
         if (enemies[i].active) {
@@ -338,10 +359,26 @@ void Update() {
     // B. 敌机子弹 vs 玩家 (缩小判定到 0.5，实现擦弹)
     for (int i = 0; i < MAX_BULLETS; i++) {
         if (bullets[i].active && bullets[i].is_enemy) {
-            if (fabs(bullets[i].pos.x - player.pos.x) < 0.5 && 
-                fabs(bullets[i].pos.y - player.pos.y) < 0.5) {
-                bullets[i].active = 0;
-                player.lives--;
+            double dx = fabs(bullets[i].pos.x - player.pos.x);
+            double dy = fabs(bullets[i].pos.y - player.pos.y);
+            double dist = sqrt(dx*dx + dy*dy);
+            
+            // 直接命中判定
+            if (dx < 0.5 && dy < 0.5) {
+                // 如果处于无敌状态，不扣血
+                if (player.invincible_timer > 0) {
+                    bullets[i].active = 0;
+                } else {
+                    bullets[i].active = 0;
+                    player.lives--;
+                }
+            }
+            // 擦弹判定：子弹极度接近但未命中
+            else if (dist < GRAZE_DISTANCE && dist >= 0.5) {
+                // 触发擦弹奖励
+                player.graze_count++;
+                player.score += 5; // 擦弹奖励5分
+                player.invincible_timer = INVINCIBLE_FRAMES; // 给予短暂无敌时间
             }
         }
     }
@@ -493,6 +530,15 @@ void Draw() {
         }
         printf(" (%ds)", (player.power_timer * 16) / 1000); // 正确计算秒数
     }
+    
+    // 擦弹计数显示
+    printf("  Graze: %d", player.graze_count);
+    
+    // 无敌状态显示
+    if (player.invincible_timer > 0) {
+        printf("  [INVINCIBLE]");
+    }
+    
     printf("  (WASD to Move)\n");
     
     for (int y = 0; y < HEIGHT; y++) {
