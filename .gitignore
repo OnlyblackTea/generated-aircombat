@@ -1,0 +1,19 @@
+# 编译输出
+*.exe
+*.out
+*.o
+*.obj
+
+# 游戏数据文件
+highscore.txt
+
+# IDE 和编辑器文件
+*.swp
+*.swo
+*~
+.vscode/
+.vs/
+
+# 临时文件
+*.tmp
+*.bak
